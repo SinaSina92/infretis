@@ -18,7 +18,7 @@ logger.addHandler(logging.NullHandler())
 
 
 ENGINES: dict = {}
-
+print("Sina")
 
 def def_globals(config):
     """Define global engine and orderparameter variables.
@@ -1102,14 +1102,14 @@ def quantis_swap_zero(
         with rare event simulations [https://doi.org/10.1021/acs.jctc.5b00012]
 
     Todo:
-        * Implement the option to mix engines in [eninge] and [engine2], as
+        * Implement the option to mix engines in [eninge] and [engine2], as
         quantis now only works properly with the same engine in all ensembles
         due to different units and file formats being used. For example, to
         extract a  configuration from [0+] into [0-] requires some processing.
         * Add options to relax crossing condition and energy acceptance rule
         * Option to do 'wf' or nah?
         * After performing a swap, another swap that happens before any moves
-        in the ensembles [0-] and [0+] are performed, we get back the original
+        in the ensembles [0-] and [0+] are performed, we get back the original
         paths. Should avoid zero swap if this is the case (see retis_swap_0)
 
     """
