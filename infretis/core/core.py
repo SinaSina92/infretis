@@ -289,9 +289,11 @@ def import_from(module_path: str, function_name: str) -> Any:
     except (OSError, ImportError):
         msg = f"Could not import module: {module_path}"
         logger.critical(msg)
+        raise
     except AttributeError:
         msg = f'Could not import "{function_name}" from "{module_path}"'
         logger.critical(msg)
+        raise
     raise ValueError(msg)
 
 

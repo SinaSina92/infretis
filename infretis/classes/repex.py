@@ -129,6 +129,11 @@ class REPEX_state:
         return self.config["simulation"]["shooting_moves"]
 
     @property
+    def eng_sw_prob(self):
+        """Retrieve engine swap probabilities list from config dict."""
+        return self.config["simulation"]["eng_sw_prob"]
+    
+    @property
     def cap(self):
         """Retrieve mc moves list from config dict."""
         return self.config["simulation"]["tis_set"].get("interface_cap", None)
@@ -1095,6 +1100,7 @@ class REPEX_state:
                 "interfaces": tuple(ens_intf),
                 "tis_set": self.config["simulation"]["tis_set"],
                 "mc_move": self.config["simulation"]["shooting_moves"][i],
+                "eng_sw_prob": self.config["simulation"]["eng_sw_prob"][i],
                 "ens_name": f"{i:03d}",
                 "start_cond": (
                     ["L", "R"]

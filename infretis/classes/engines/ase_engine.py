@@ -54,6 +54,7 @@ class ASEEngine(EngineBase):
         self.subcycles = subcycles
         self.temperature = temperature
         self.input_path = Path(exe_path) / input_path
+        self.calculator_settings = calculator_settings
         self.ext = "traj"
         self.name = "ase"
 

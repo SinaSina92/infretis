@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 import os
 import time
+import shutil
+import math
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
+from infretis.classes.formatter import PathStorage
 from infretis.classes.engines.factory import create_engines
 from infretis.classes.orderparameter import create_orderparameters
-from infretis.classes.path import paste_paths
+from infretis.classes.path import paste_paths, load_path
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 logger.addHandler(logging.NullHandler())
@@ -307,25 +310,49 @@ def select_shoot(
     if len(picked) == 1:
         pens = next(iter(picked.values()))
         ens_set, path = (pens[i] for i in ["ens", "traj"])
+        eng_sw_prob = ens_set["eng_sw_prob"]
         move = ens_set["mc_move"]
         logger.info(
             f"starting {move} in {ens_set['ens_name']}"
             + f" with path_n {path.path_number}"
         )
         start_cond = ens_set["start_cond"]
-        accept, new_path, status = sh_moves[move](
-            ens_set, path, engines[0][0], start_cond=start_cond
-        )
+        
+        # if the engine swap prob is higher than a random number do swap instead of the sh_moves
+        print(f"ens {int(ens_set['ens_name']):02d}, {move}, {ens_set['interfaces'][1]:.3f}")
+        # if eng_sw_prob > random.random():
+        if eng_sw_prob > ens_set["rgen"].random():
+            logger.info(f"Engine swap:")
+            accept, new_path, status = engine_swap(ens_set, path, engines, start_cond=start_cond)
+        else:
+            logger.info(f"Engine swap is rejected, so we go with {engines[0][0].calculator_settings['class']} engine:")
+            accept, new_path, status = sh_moves[move](ens_set, path, engines[0][0], start_cond=start_cond)
         new_paths = [new_path]
     else:
         if picked[-1]["ens"]["tis_set"]["quantis"]:
             accept, new_paths, status = quantis_swap_zero(picked, engines)
         else:
+            if len(engines[0]) > 1:
+                engines = {k: [v[0]] for k, v in engines.items()}
+            logger.info(f"Zero swap! Using engines {engines[-1][0].calculator_settings['class']}, {engines[0][0].calculator_settings['class']}")
             accept, new_paths, status = retis_swap_zero(picked, engines)
 
     logger.info(f"Move was {accept} with status {status}\n")
     return accept, new_paths, status
 
+
+    #     accept, new_path, status = sh_moves[move](
+    #         ens_set, path, engines[0][0], start_cond=start_cond
+    #     )
+    #     new_paths = [new_path]
+    # else:
+    #     if picked[-1]["ens"]["tis_set"]["quantis"]:
+    #         accept, new_paths, status = quantis_swap_zero(picked, engines)
+    #     else:
+    #         accept, new_paths, status = retis_swap_zero(picked, engines)
+
+    # logger.info(f"Move was {accept} with status {status}\n")
+    # return accept, new_paths, status
 
 def shoot(
     ens_set: Dict[str, Any],
@@ -477,6 +504,7 @@ def wire_fencing(
     ens_set: Dict[str, Any],
     trial_path: InfPath,
     engine: EngineBase,
+    shooting_point: Optional[System] = None,
     start_cond: Tuple[str, ...] = ("L",),
 ) -> Tuple[bool, InfPath, str]:
     """Perform a Wire Fencing move from an initial path.
@@ -523,9 +551,14 @@ def wire_fencing(
     succ_seg = 0
     for i in range(ens_set["tis_set"].get("n_jumps", 2)):
         logger.debug("Trying a new web with Wire Fencing, jump %i", i)
-        success, trial_seg, status = shoot(
-            sub_ens, new_segment, engine, start_cond=("L", "R")
-        )
+        if i == 0 and shooting_point is not None:
+            success, trial_seg, status = shoot(
+                sub_ens, new_segment, engine, shooting_point=shooting_point, start_cond=("L", "R")
+            )
+        else:
+            success, trial_seg, status = shoot(
+                sub_ens, new_segment, engine, start_cond=("L", "R")
+            )
         start, end, _, _ = trial_seg.check_interfaces(wf_int)
         logger.info(
             f"Jump {i}, len {trial_seg.length}, status"
@@ -749,13 +782,15 @@ def prepare_shooting_point(
     shooting_point, idx = path.get_shooting_point(rgen)
     orderp = shooting_point.order
     shpt_copy = shooting_point.copy()
-    logger.info("Shooting from order parameter/index: %f, %d", orderp[0], idx)
+    logger.info("Selected shooting point => op/index/vpot/ekin: %f, %d, %f, %f", orderp[0], idx, shooting_point.vpot, shooting_point.ekin)
+    # logger.info("Shooting from order parameter/index: %f, %d", orderp[0], idx)
     # Copy the shooting point, so that we can modify velocities without
     # altering the original path:
     # Modify the velocities:
     dek, _ = engine.modify_velocities(shpt_copy, ens_set["tis_set"])
     orderp = engine.calculate_order(shpt_copy)
     shpt_copy.order = orderp
+    logger.info("Modified shooting point => op/index/vpot/ekin: %f, %d, %f, %f", shpt_copy.order[0], idx, shpt_copy.vpot, shpt_copy.ekin)
     return shpt_copy, idx, dek
 
 
@@ -793,6 +828,161 @@ def check_kick(
         trial_path.status = "KOB"
         return False
     return True
+
+
+def engine_swap(
+    ens_set: Dict[str, Any],
+    path0: InfPath,
+    engines: Dict[int, List[EngineBase]],
+    start_cond: Tuple[str, ...] = ("L",),
+) -> Tuple[bool, List[InfPath], str]:
+
+    pstore = PathStorage()
+    sh_moves: Dict[str, MoveMethod] = {
+        "wf": wire_fencing,
+        "sh": shoot,
+    }
+    move = ens_set["mc_move"]
+    ensemble_number = int(ens_set["ens_name"])
+
+    engine0 = engines[0][0]  # hi engine
+    engine1 = engines[0][1]  # lo engine
+
+    logger.info(f"Engine0 (hi): {engine0.calculator_settings['class']}")
+    logger.info(f"Engine1 (lo): {engine1.calculator_settings['class']}")
+
+    # Path storage directory. Only one path per ensemble is stored here.
+    # Old paths in this directory will be overwritten.
+    path_address = f"load1/{ensemble_number}"
+
+    # If no path exists in the lo folder for this ensemble, generate one.
+    # Use a point from the hi path and propagate it with the lo engine.
+    if not os.path.isdir(path_address):
+        accept = False
+        while not accept:
+            logger.info(f"No path found for ensemble {ensemble_number} in 'load1'.")
+            logger.info(f"Creating initial path in ensemble {ensemble_number} using lo engine.")
+            accept, new_path, status = sh_moves[move](ens_set, path0, engine1, start_cond=start_cond)
+            logger.info(f"path0 in engine1: {status}, old len: {path0.length}, new len: {new_path.length}")
+
+            if accept:
+                new_path.path_number = ensemble_number
+                data = {"path": new_path, "dir": os.path.join(os.getcwd(), "load1")}
+                pstore.output("lo_initial_path", data)
+
+    path = load_path(path_address)
+    logger.info(f"Path found for ensemble {ensemble_number} in 'load1'.")
+
+    # Perform lo FF exploration in this ensemble with 50% probability.
+    # If accepted, generate a new lo path based on the current one using the lo engine.
+    if ens_set["rgen"].random() > 0.5:
+        logger.info(f"lo FF exploration move ({move}) in ensemble {ensemble_number}.")
+        accept, path1, status = sh_moves[move](ens_set, path, engine1, start_cond=start_cond)
+
+        # If the new path is accepted, we replace the old lo path; otherwise, we proceed with the engine swap algorithm.
+        if accept:
+            logger.info(f"lo FF accepted: {status}, old len: {path.length}, new len: {path1.length}")
+            path1.path_number = ensemble_number
+            data = {"path": path1, "dir": os.path.join(os.getcwd(), "load1")}
+            shutil.rmtree(path_address)
+            pstore.output("lo_exploration", data)
+        else:
+            logger.info(f"lo FF move ({move}) rejected. Proceeding with engine swap.")
+    else:
+        logger.info(f"No lo FF move performed for ensemble {ensemble_number}.")
+
+    path1 = load_path(path_address)
+    intf_cap = ens_set["tis_set"].get("interface_cap", ens_set["interfaces"][2])
+    wf_int = [ens_set["interfaces"][1]] * 2 + [intf_cap]
+
+    # Select shooting point from path0
+    logger.info("Creating shooting point in path0:")
+    if move == "wf":
+        _, new_segment0 = wirefence_weight_and_pick(path0, wf_int[0], wf_int[2], return_seg=True, ens_set=ens_set)
+        shooting_point_p0, _, _ = prepare_shooting_point(new_segment0, ens_set["rgen"], engine0, ens_set)
+    else:
+        shooting_point_p0, _, _ = prepare_shooting_point(path0, ens_set["rgen"], engine0, ens_set)
+
+    logger.info(f"Shooting point vpot calculation in path0 with engine0:")
+    tmp_p0_e0 = path0.empty_path(maxlen=1)
+    engine0.propagate(tmp_p0_e0, ens_set, shooting_point_p0)
+    logger.info(f"Shooting point vpot calculation in path0 with engine1:")
+    tmp_p0_e1 = path0.empty_path(maxlen=1)
+    engine1.propagate(tmp_p0_e1, ens_set, shooting_point_p0)
+
+    logger.info(f"Creating shooting point in path1:")
+    if move == "wf":
+        _, new_segment1 = wirefence_weight_and_pick(path1, wf_int[0], wf_int[2], return_seg=True, ens_set=ens_set)
+        shooting_point_p1, _, _ = prepare_shooting_point(new_segment1, ens_set["rgen"], engine0, ens_set)
+    else:
+        shooting_point_p1, _, _ = prepare_shooting_point(path1, ens_set["rgen"], engine0, ens_set)
+
+    logger.info(f"Shooting point vpot calculation in path1 with engine0:")
+    tmp_p1_e0 = path0.empty_path(maxlen=1)
+    engine0.propagate(tmp_p1_e0, ens_set, shooting_point_p1)
+    logger.info(f"Shooting point vpot calculation in path1 with engine1:")
+    tmp_p1_e1 = path0.empty_path(maxlen=1)
+    engine1.propagate(tmp_p1_e1, ens_set, shooting_point_p1)
+
+    # Energy calculations for acceptance    
+    P0_E0 = tmp_p0_e0.phasepoints[0].vpot
+    P1_E0 = tmp_p1_e0.phasepoints[0].vpot
+    P1_E1 = tmp_p1_e1.phasepoints[0].vpot
+    P0_E1 = tmp_p0_e1.phasepoints[0].vpot
+    
+    logger.info(f"V0r0 {P0_E0:.4e} V0r1 {P1_E0:.4e} dV0 {P0_E0 - P1_E0:.4e}")
+    logger.info(f"V1r0 {P0_E1:.4e} V1r1 {P1_E1:.4e} dV1 {P0_E1 - P1_E1:.4e}")
+
+    # Check consistency with energy values in energy.txt files
+    if not math.isclose(P0_E0, shooting_point_p0.vpot, rel_tol=1e-2):
+        logger.info(f"Energy mismatch between {P0_E0} evaluated with engine0 vs {shooting_point_p0.vpot} from the energy.txt file (tolerance=1e-2)")
+
+    if not math.isclose(P1_E1, shooting_point_p1.vpot, rel_tol=1e-2):
+        logger.info(f"Energy mismatch between {P1_E1} evaluated with engine0 vs {shooting_point_p1.vpot} from the energy.txt file (tolerance=1e-2)")
+
+    deltaV0 = P0_E0 - P1_E0
+    deltaV1 = P0_E1 - P1_E1
+    logger.info(f"DeltaDeltaU is: {deltaV1 - deltaV0}")
+    logger.info(f"exp_minus_betaDeltaDeltaU is: {np.exp(deltaV0 * engine0.beta - deltaV1 * engine1.beta)}")
+    pacc = min(1.0, np.exp(deltaV0 * engine0.beta - deltaV1 * engine1.beta))
+    rand = ens_set["rgen"].random()
+
+    # Acceptance logic
+    if ens_set["tis_set"]["accept_all"]:
+        logger.info(f"Accepting all! Actual Pacc = {pacc}")
+        accept = True
+    elif rand <= pacc:
+        logger.info(f"Energy acceptance rule checks out! Pacc = {pacc}")
+        logger.info("DeltaDeltaU Accepted!")
+        accept = True
+    else:
+        status = "QEA"
+        logger.info(f"Random nr {rand} > pacc {pacc}! Rejecting zero swap.")
+        logger.info("DeltaDeltaU Rejected!")
+        accept = False
+        new_path0 = path0
+
+    # If accepted, perform the swap starting with the lo engine (assumed faster).
+    if accept:
+        logger.info(f"Creating a new path in engine1 from the shooting point of the path in engine0:")
+        accept, new_path1, status = sh_moves[move](ens_set, path0, engine1, shooting_point=shooting_point_p0, start_cond=start_cond)
+        logger.info(f"Move {move} for path0 in engine1 status: {status}, old len: {path0.length}, new len: {new_path1.length}")
+        
+        # If the lo engine path was accepted, continue the swap with the hi engine.
+        if accept:
+            logger.info(f"Creating a new path in engine0 from the shooting point of the path in engine1:")
+            accept, new_path0, status = sh_moves[move](ens_set, path1, engine0, shooting_point=shooting_point_p1, start_cond=start_cond)
+            logger.info(f"Move {move} for path1 in engine0 status: {status}, old len: {path1.length}, new len: {new_path0.length}")
+            
+            # Store only new_path1; new_path0 will be returned for further analysis.  
+            new_path1.path_number = ensemble_number
+            data = {"path": new_path1, "dir": os.path.join(os.getcwd(), "load1"),}
+            shutil.rmtree(f"load1/{ensemble_number}")
+            pstore.output("lo_engine_swap", data)
+        else:
+            new_path0 = path0
+
+    return accept, new_path0, status
 
 
 def retis_swap_zero(
