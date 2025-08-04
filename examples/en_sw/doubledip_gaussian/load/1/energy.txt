@@ -1,0 +1,17 @@
+# Cycle: 3199, status: ACC, move: None
+#     Time      Potential        Kinetic
+         0       0.006492       0.035988            nan            nan
+         1       0.006719       0.034555            nan            nan
+         2       0.006915       0.035545            nan            nan
+         3       0.007091       0.035841            nan            nan
+         4       0.007202       0.035187            nan            nan
+         5       0.007269       0.035279            nan            nan
+         6       0.007334       0.034913            nan            nan
+         7       0.007386       0.039734            nan            nan
+         8       0.007378       0.039453            nan            nan
+         9       0.007339       0.039704            nan            nan
+        10       0.007277       0.038273            nan            nan
+        11       0.007167       0.038220            nan            nan
+        12       0.007010       0.037760            nan            nan
+        13       0.006800       0.038743            nan            nan
+        14       0.006551       0.039433            nan            nan
