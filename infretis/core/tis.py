@@ -341,19 +341,6 @@ def select_shoot(
     return accept, new_paths, status
 
 
-    #     accept, new_path, status = sh_moves[move](
-    #         ens_set, path, engines[0][0], start_cond=start_cond
-    #     )
-    #     new_paths = [new_path]
-    # else:
-    #     if picked[-1]["ens"]["tis_set"]["quantis"]:
-    #         accept, new_paths, status = quantis_swap_zero(picked, engines)
-    #     else:
-    #         accept, new_paths, status = retis_swap_zero(picked, engines)
-
-    # logger.info(f"Move was {accept} with status {status}\n")
-    # return accept, new_paths, status
-
 def shoot(
     ens_set: Dict[str, Any],
     path: InfPath,
@@ -957,7 +944,7 @@ def engine_swap(
         accept = True
     else:
         status = "QEA"
-        logger.info(f"Random nr {rand} > pacc {pacc}! Rejecting zero swap.")
+        logger.info(f"Random nr {rand} > pacc {pacc}! Rejecting engine swap.")
         logger.info("DeltaDeltaU Rejected!")
         accept = False
         new_path0 = path0
@@ -1046,6 +1033,12 @@ def retis_swap_zero(
     ens_moves = [ens_set0["mc_move"], ens_set1["mc_move"]]
     intf_w = [list(ens_set0["interfaces"]), list(ens_set1["interfaces"])]
 
+    logger.info(
+        f"starting zero swap in {ens_set0['ens_name']} ({path_old0.check_interfaces(ens_set0['interfaces'])[0]}{path_old0.check_interfaces(ens_set0['interfaces'])[1]}) "
+        + f"{ens_set1['ens_name']} ({path_old1.check_interfaces(ens_set1['interfaces'])[0]}{path_old1.check_interfaces(ens_set1['interfaces'])[1]})"
+        + f" with path_n {path_old0.path_number}, {path_old1.path_number}"
+    )
+    
     # intf_w = [list(i) for i in (path_ensemble0.interfaces,
     #                             path_ensemble1.interfaces)]
     for i, mc_move in enumerate([ens_set0["tis_set"], ens_set1["tis_set"]]):
@@ -1067,7 +1060,6 @@ def retis_swap_zero(
     )
     # if allowed:
     #     swap_ensemble_attributes(ensemble0, ensemble1, settings)
-
     # if lambda_minus_one, reject early if path_old0
     if set(ens_set0["start_cond"]) == set(["L", "R"]):
         if path_old0.check_interfaces(ens_set0["interfaces"])[1] == "L":
@@ -1161,7 +1153,7 @@ def retis_swap_zero(
         path1.status = "FTS"
     else:
         path1.status = "ACC"
-    logger.info("Done with swap zero!")
+    logger.info(f"Done with swap zero!")
 
     # Final checks:
     accept = path0.status == "ACC" and path1.status == "ACC"

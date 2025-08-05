@@ -21,7 +21,7 @@ interfaces = [
     -0.1325,
      1.7000,
 ]
-steps = 40000
+steps = 100000
 seed = 0
 load_dir = "load"
 load_dir1 = "load1"
@@ -100,7 +100,7 @@ ensemble_engines = [
 ]
 
 [simulation.tis_set]
-maxlength = 20000
+maxlength = 100000
 allowmaxlength = false
 zero_momentum = false
 n_jumps = 1
