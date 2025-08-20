@@ -8,7 +8,7 @@ import time
 import shutil
 import math
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
-
+import re
 import numpy as np
 
 from infretis.classes.formatter import PathStorage
@@ -319,8 +319,6 @@ def select_shoot(
         start_cond = ens_set["start_cond"]
         
         # if the engine swap prob is higher than a random number do swap instead of the sh_moves
-        print(f"ens {int(ens_set['ens_name']):02d}, {move}, {ens_set['interfaces'][1]:.3f}")
-        # if eng_sw_prob > random.random():
         if eng_sw_prob > ens_set["rgen"].random():
             logger.info(f"Engine swap:")
             accept, new_path, status = engine_swap(ens_set, path, engines, start_cond=start_cond)
@@ -769,7 +767,7 @@ def prepare_shooting_point(
     shooting_point, idx = path.get_shooting_point(rgen)
     orderp = shooting_point.order
     shpt_copy = shooting_point.copy()
-    logger.info("Selected shooting point => op/index/vpot/ekin: %f, %d, %f, %f", orderp[0], idx, shooting_point.vpot, shooting_point.ekin)
+    # logger.info("Selected shooting point => op/index/vpot/ekin: %f, %d, %f, %f", orderp[0], idx, shooting_point.vpot, shooting_point.ekin)
     # logger.info("Shooting from order parameter/index: %f, %d", orderp[0], idx)
     # Copy the shooting point, so that we can modify velocities without
     # altering the original path:
@@ -777,7 +775,7 @@ def prepare_shooting_point(
     dek, _ = engine.modify_velocities(shpt_copy, ens_set["tis_set"])
     orderp = engine.calculate_order(shpt_copy)
     shpt_copy.order = orderp
-    logger.info("Modified shooting point => op/index/vpot/ekin: %f, %d, %f, %f", shpt_copy.order[0], idx, shpt_copy.vpot, shpt_copy.ekin)
+    # logger.info("Modified shooting point => op/index/vpot/ekin: %f, %d, %f, %f", shpt_copy.order[0], idx, shpt_copy.vpot, shpt_copy.ekin)
     return shpt_copy, idx, dek
 
 
@@ -817,6 +815,45 @@ def check_kick(
     return True
 
 
+def create_folder_name(parent_dir):
+    os.makedirs(parent_dir, exist_ok=True)
+    number = 0
+    while True:
+        new_folder = os.path.join(parent_dir, str(number))
+        try:
+            os.mkdir(new_folder)  # atomic if it doesn't exist
+            logger.info(f"Old lo path moved to load1_all/{number}")
+            return new_folder  # success: this is your backup path
+        except FileExistsError:
+            number += 1  # already exists, try the next number
+
+
+def update_weight(path_address):
+    order_file = os.path.join(path_address, "order.txt")
+
+    # Read all lines
+    with open(order_file, 'r') as f:
+        lines = f.readlines()
+
+    # Parse the first line and update the weight
+    first_line = lines[0]
+    weight_match = re.search(r'weight\s*=\s*([0-9.]+)', first_line)
+    
+    old_weight = float(weight_match.group(1))
+    new_weight = old_weight + 1.0
+    updated_line = re.sub(
+        r'weight\s*=\s*[0-9.]+',
+        f'weight = {new_weight}',
+        first_line
+    )
+    lines[0] = updated_line
+    logger.info(f"lo path weight {path_address} update => Old weight: {old_weight}, new weight: {new_weight}.")
+
+    # Write lines back to the file
+    with open(order_file, 'w') as f:
+        f.writelines(lines)
+
+
 def engine_swap(
     ens_set: Dict[str, Any],
     path0: InfPath,
@@ -838,8 +875,8 @@ def engine_swap(
     logger.info(f"Engine0 (hi): {engine0.calculator_settings['class']}")
     logger.info(f"Engine1 (lo): {engine1.calculator_settings['class']}")
 
-    # Path storage directory. Only one path per ensemble is stored here.
-    # Old paths in this directory will be overwritten.
+    # lo path storage directory. Only one path per ensemble is stored here.
+    # Old paths in this directory will be overwritten by the new generated paths.
     path_address = f"load1/{ensemble_number}"
 
     # If no path exists in the lo folder for this ensemble, generate one.
@@ -851,11 +888,12 @@ def engine_swap(
             logger.info(f"Creating initial path in ensemble {ensemble_number} using lo engine.")
             accept, new_path, status = sh_moves[move](ens_set, path0, engine1, start_cond=start_cond)
             logger.info(f"path0 in engine1: {status}, old len: {path0.length}, new len: {new_path.length}")
+            logger.info(f"lo_initial_path with {path_address} accepted.")
 
             if accept:
                 new_path.path_number = ensemble_number
                 data = {"path": new_path, "dir": os.path.join(os.getcwd(), "load1")}
-                pstore.output("lo_initial_path", data)
+                pstore.output(f"lo_initial_path, weight = 1, ensemble = {ensemble_number}", data)
 
     path = load_path(path_address)
     logger.info(f"Path found for ensemble {ensemble_number} in 'load1'.")
@@ -871,13 +909,18 @@ def engine_swap(
             logger.info(f"lo FF accepted: {status}, old len: {path.length}, new len: {path1.length}")
             path1.path_number = ensemble_number
             data = {"path": path1, "dir": os.path.join(os.getcwd(), "load1")}
+            shutil.copy2(os.path.join(path_address, "order.txt"), create_folder_name(f"load1_all"))
             shutil.rmtree(path_address)
-            pstore.output("lo_exploration", data)
+            pstore.output(f"lo_exploration, weight = 1, ensemble = {ensemble_number}", data)
+            logger.info(f"lo_exploration with {path_address} accepted.")
         else:
+            logger.info(f"lo_exploration with {path_address} rejected.")
+            update_weight(path_address)
             logger.info(f"lo FF move ({move}) rejected. Proceeding with engine swap.")
     else:
         logger.info(f"No lo FF move performed for ensemble {ensemble_number}.")
 
+    logger.info(f"Engine swap main part started:")
     path1 = load_path(path_address)
     intf_cap = ens_set["tis_set"].get("interface_cap", ens_set["interfaces"][2])
     wf_int = [ens_set["interfaces"][1]] * 2 + [intf_cap]
@@ -939,7 +982,7 @@ def engine_swap(
         logger.info(f"Accepting all! Actual Pacc = {pacc}")
         accept = True
     elif rand <= pacc:
-        logger.info(f"Energy acceptance rule checks out! Pacc = {pacc}")
+        logger.info(f"Random nr {rand} < pacc {pacc}! Accepting engine swap.")
         logger.info("DeltaDeltaU Accepted!")
         accept = True
     else:
@@ -961,13 +1004,27 @@ def engine_swap(
             accept, new_path0, status = sh_moves[move](ens_set, path1, engine0, shooting_point=shooting_point_p1, start_cond=start_cond)
             logger.info(f"Move {move} for path1 in engine0 status: {status}, old len: {path1.length}, new len: {new_path0.length}")
             
-            # Store only new_path1; new_path0 will be returned for further analysis.  
-            new_path1.path_number = ensemble_number
-            data = {"path": new_path1, "dir": os.path.join(os.getcwd(), "load1"),}
-            shutil.rmtree(f"load1/{ensemble_number}")
-            pstore.output("lo_engine_swap", data)
+            # If the hi engine path was accepted:
+            if accept:
+                # Store only new_path1; new_path0 will be returned for further analysis.  
+                new_path1.path_number = ensemble_number
+                data = {"path": new_path1, "dir": os.path.join(os.getcwd(), "load1"),}
+                shutil.copy2(os.path.join(path_address, "order.txt"), create_folder_name(f"load1_all"))
+                shutil.rmtree(f"load1/{ensemble_number}")
+                pstore.output(f"lo_engine_swap, weight = 1, ensemble = {ensemble_number}", data)
+                logger.info(f"engine swap with {path_address} and load/{path0.path_number} accepted.")
+            else:
+                logger.info(f"engine swap (hi path creation) with {path_address} and load/{path0.path_number} rejected.")
+                update_weight(path_address)
+                new_path0 = path0   
         else:
+            logger.info(f"engine swap (lo path creation) with {path_address} and load/{path0.path_number} rejected.")
+            update_weight(path_address)
             new_path0 = path0
+    else:
+        logger.info(f"engine swap (DeltaDeltaU) with {path_address} and load/{path0.path_number} rejected.")
+        update_weight(path_address)
+        new_path0 = path0        
 
     return accept, new_path0, status
 

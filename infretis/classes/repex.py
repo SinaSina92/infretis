@@ -181,6 +181,7 @@ class REPEX_state:
 
     def pick(self):
         """Pick path and ens."""
+        print(self.cstep)
         prob = self.prob.astype("float64").flatten()
         p = self.rgen.choice(self.n**2, p=np.nan_to_num(prob / np.sum(prob)))
         traj, ens = np.divmod(p, self.n)

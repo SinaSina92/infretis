@@ -195,7 +195,15 @@ class Position(OrderParameter):
         """Calculate the order parameter."""
         return [system.pos[self.index[0], self.index[1]]]
 
-
+# For maze
+# class Position(OrderParameter):
+#     def __init__(self, periodic: bool = False):
+#         description = "Position in x and y"
+#         super().__init__(description=description, velocity=False)
+#     def calculate(self, system: System) -> List[float]:
+#         pos = system.pos[0]  # Single particle
+#         return [pos[1], pos[0]]  # x and y only
+    
 class Distance(OrderParameter):
     """The scalar distance between two particles.
 

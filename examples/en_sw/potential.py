@@ -6,6 +6,7 @@ from ase.units import fs, kB
 import matplotlib.pyplot as plt
 import os
 
+
 class Gaussian(Calculator):
     implemented_properties = ['energy', 'forces']
 
@@ -28,6 +29,7 @@ class Gaussian(Calculator):
 
         self.results['energy'] = energy
         self.results['forces'] = forces
+
 
 class DoubleDip(Calculator):
     implemented_properties = ['energy', 'forces']
@@ -66,3 +68,16 @@ class DoubleDip(Calculator):
 
         self.results['energy'] = energy
         self.results['forces'] = forces
+        
+class FlatPotential(Calculator):
+    implemented_properties = ['energy', 'forces']
+
+    def __init__(self, E0=0.0, **kwargs):
+        super().__init__(**kwargs)
+        self.E0 = E0
+
+    def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):
+        super().calculate(atoms, properties, system_changes)
+        n_atoms = len(atoms)
+        self.results['energy'] = self.E0
+        self.results['forces'] = np.zeros((n_atoms, 3))
