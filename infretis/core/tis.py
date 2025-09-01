@@ -313,25 +313,21 @@ def select_shoot(
         eng_sw_prob = ens_set["eng_sw_prob"]
         move = ens_set["mc_move"]
         eng_swap = ens_set["tis_set"]["engine_swap"]
-        logger.info(
-            f"starting {move} in {ens_set['ens_name']}"
-            + f" with path_n {path.path_number}"
-        )
+        logger.info(f"Starting {move} in ensemble {ens_set['ens_name']} with load/{path.path_number}")
         start_cond = ens_set["start_cond"]
-
         ensemble_number = int(ens_set["ens_name"])
         lo_active_path_address = f"load1/{ensemble_number}"
         
         # if the engine swap prob is higher than a random number do swap instead of the sh_moves
         eng_swap_rand = ens_set["rgen"].random()
-        logger.info(f"Engine swap is {eng_swap} with probability {eng_sw_prob}, rand {eng_swap_rand}.")
         if eng_swap:
             if eng_sw_prob > eng_swap_rand:
-                logger.info(f"Engine swap:")
+                logger.info(f"Engine swap started, swap probability {eng_sw_prob}, rand {eng_swap_rand}:")
                 accept, new_path, status = engine_swap(ens_set, path, engines, start_cond=start_cond)
             else:
-                logger.info(f"Engine swap is rejected, so we go with {engines[0][0].calculator_settings['class']} engine:")
-                update_weight(lo_active_path_address)
+                logger.info(f"Engine swap rejected, continuing with {engines[0][0].calculator_settings['class']} (hi) engine:")
+                # We get error here if the lo path does not exist in the beginning.
+                # update_weight(lo_active_path_address)
                 accept, new_path, status = sh_moves[move](ens_set, path, engines[0][0], start_cond=start_cond)
             new_paths = [new_path]
         else:
@@ -1122,9 +1118,9 @@ def retis_swap_zero(
     intf_w = [list(ens_set0["interfaces"]), list(ens_set1["interfaces"])]
 
     logger.info(
-        f"starting zero swap in {ens_set0['ens_name']} ({path_old0.check_interfaces(ens_set0['interfaces'])[0]}{path_old0.check_interfaces(ens_set0['interfaces'])[1]}) "
+        f"Starting zero swap in ensembles {ens_set0['ens_name']} ({path_old0.check_interfaces(ens_set0['interfaces'])[0]}{path_old0.check_interfaces(ens_set0['interfaces'])[1]}) "
         + f"{ens_set1['ens_name']} ({path_old1.check_interfaces(ens_set1['interfaces'])[0]}{path_old1.check_interfaces(ens_set1['interfaces'])[1]})"
-        + f" with path_n {path_old0.path_number}, {path_old1.path_number}"
+        + f" with load/{path_old0.path_number} and load/{path_old1.path_number}"
     )
     
     # intf_w = [list(i) for i in (path_ensemble0.interfaces,
