@@ -312,6 +312,7 @@ def select_shoot(
         ens_set, path = (pens[i] for i in ["ens", "traj"])
         eng_sw_prob = ens_set["eng_sw_prob"]
         move = ens_set["mc_move"]
+        eng_swap = ens_set["tis_set"]["engine_swap"]
         logger.info(
             f"starting {move} in {ens_set['ens_name']}"
             + f" with path_n {path.path_number}"
@@ -322,15 +323,20 @@ def select_shoot(
         lo_active_path_address = f"load1/{ensemble_number}"
         
         # if the engine swap prob is higher than a random number do swap instead of the sh_moves
-        # if eng_sw_prob > ens_set["rgen"].random():
-        if eng_sw_prob > 0:
-            logger.info(f"Engine swap:")
-            accept, new_path, status = engine_swap(ens_set, path, engines, start_cond=start_cond)
+        eng_swap_rand = ens_set["rgen"].random()
+        logger.info(f"Engine swap is {eng_swap} with probability {eng_sw_prob}, rand {eng_swap_rand}.")
+        if eng_swap:
+            if eng_sw_prob > eng_swap_rand:
+                logger.info(f"Engine swap:")
+                accept, new_path, status = engine_swap(ens_set, path, engines, start_cond=start_cond)
+            else:
+                logger.info(f"Engine swap is rejected, so we go with {engines[0][0].calculator_settings['class']} engine:")
+                update_weight(lo_active_path_address)
+                accept, new_path, status = sh_moves[move](ens_set, path, engines[0][0], start_cond=start_cond)
+            new_paths = [new_path]
         else:
-            logger.info(f"Engine swap is rejected, so we go with {engines[0][0].calculator_settings['class']} engine:")
-            update_weight(lo_active_path_address)
             accept, new_path, status = sh_moves[move](ens_set, path, engines[0][0], start_cond=start_cond)
-        new_paths = [new_path]
+            new_paths = [new_path]
     else:
         if picked[-1]["ens"]["tis_set"]["quantis"]:
             accept, new_paths, status = quantis_swap_zero(picked, engines)
@@ -839,14 +845,14 @@ def update_weight(path_address):
     order_file = os.path.join(path_address, "order.txt")
     ensemble = int(path_address.split("/")[-1])
     print("="*20)
-    print(f"Ensemble: {ensemble}")
+    # print(f"Ensemble: {ensemble}")
     # Read all lines
     with open(order_file, 'r') as f:
         lines = f.readlines()
     
     # Parse the first line and update the weight
     first_line = lines[0]
-    print(first_line[:-1])
+    # print(first_line[:-1])
     weight_match = re.search(r'weight\s*=\s*([0-9.]+)', first_line)
 
     if weight_match:
@@ -872,7 +878,7 @@ def update_weight(path_address):
         move = match.group(2)
         updated_line = f"# Cycle: initial_path, weight = {new_weight}, ensemble = {ensemble}, status: {status}, move: {move}\n"
 
-    print(updated_line[:-1])
+    # print(updated_line[:-1])
     lines[0] = updated_line
     logger.info(f"lo path weight {path_address} update => Old weight: {old_weight}, new weight: {new_weight}.")
 

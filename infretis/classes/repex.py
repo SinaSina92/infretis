@@ -131,7 +131,7 @@ class REPEX_state:
     @property
     def eng_sw_prob(self):
         """Retrieve engine swap probabilities list from config dict."""
-        return self.config["simulation"]["eng_sw_prob"]
+        return self.config["simulation"].get("eng_sw_prob", None)
     
     @property
     def cap(self):
@@ -181,8 +181,8 @@ class REPEX_state:
 
     def pick(self):
         """Pick path and ens."""
-        # if self.cstep % 1 == 0 and self.cstep != 0:
-            # print(self.cstep)
+        if self.cstep % 1 == 0 and self.cstep != 0:
+            print(f"step: {self.cstep}")
         prob = self.prob.astype("float64").flatten()
         p = self.rgen.choice(self.n**2, p=np.nan_to_num(prob / np.sum(prob)))
         traj, ens = np.divmod(p, self.n)
@@ -1098,11 +1098,15 @@ class REPEX_state:
         # create all path ensembles
         pensembles = {}
         for i, ens_intf in enumerate(ens_intfs):
+
+            eng_sw_probs = self.config["simulation"].get("eng_sw_prob", [])
+            # Hard-coded: if not specified, set the engine swap probability for that ensemble to 0.5.
+            eng_sw = eng_sw_probs[i] if i < len(eng_sw_probs) else 0.5
             pensembles[i] = {
                 "interfaces": tuple(ens_intf),
                 "tis_set": self.config["simulation"]["tis_set"],
                 "mc_move": self.config["simulation"]["shooting_moves"][i],
-                "eng_sw_prob": self.config["simulation"]["eng_sw_prob"][i],
+                "eng_sw_prob": eng_sw,
                 "ens_name": f"{i:03d}",
                 "start_cond": (
                     ["L", "R"]

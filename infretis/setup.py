@@ -191,8 +191,13 @@ def setup_config(
     l_1 = config["simulation"]["tis_set"].get("lambda_minus_one", False)
     config["simulation"]["tis_set"]["lambda_minus_one"] = l_1
 
+    engine_swap = config["simulation"]["tis_set"].get("engine_swap", False)
+    config["simulation"]["tis_set"]["engine_swap"] = engine_swap
+
     if quantis and not has_ens_engs:
         config["simulation"]["ensemble_engines"][0] = ["engine0"]
+    if engine_swap and not has_ens_engs:
+        config["simulation"]["ensemble_engines"] = [["engine", "engine1"] for _ in config["simulation"]["ensemble_engines"]]
     accept_all = config["simulation"]["tis_set"].get("accept_all", False)
     config["simulation"]["tis_set"]["accept_all"] = accept_all
 
@@ -214,9 +219,7 @@ def check_config(config: dict) -> None:
     n_sh_moves = len(sh_moves)
     intf_cap = config["simulation"]["tis_set"].get("interface_cap", False)
     quantis = config["simulation"]["tis_set"].get("quantis", False)
-    lambda_minus_one = config["simulation"]["tis_set"].get(
-        "lambda_minus_one", False
-    )
+    lambda_minus_one = config["simulation"]["tis_set"].get("lambda_minus_one", False)
 
     if lambda_minus_one is not False and lambda_minus_one >= intf[0]:
         raise TOMLConfigError(
