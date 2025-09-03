@@ -751,7 +751,7 @@ def shoot_backwards(
 
 
 def prepare_shooting_point(
-    path: InfPath, rgen: Generator, engine: EngineBase, ens_set: Dict[str, Any]
+    path: InfPath, rgen: Generator, engine: EngineBase, ens_set: Dict[str, Any], keep_old_ekin: bool = False,
 ) -> Tuple[System, int, float]:
     """Select and modify velocities for a shooting move.
 
@@ -775,16 +775,22 @@ def prepare_shooting_point(
     shooting_point, idx = path.get_shooting_point(rgen)
     orderp = shooting_point.order
     shpt_copy = shooting_point.copy()
-    # logger.info("Selected shooting point => op/index/vpot/ekin: %f, %d, %f, %f", orderp[0], idx, shooting_point.vpot, shooting_point.ekin)
     logger.info(f"Selected shooting point => op/index/vpot/ekin: {orderp[0]:.6f}, {idx}, {shooting_point.vpot}, {shooting_point.ekin}")
-    # logger.info("Shooting from order parameter/index: %f, %d", orderp[0], idx)
     # Copy the shooting point, so that we can modify velocities without
     # altering the original path:
     # Modify the velocities:
-    dek, _ = engine.modify_velocities(shpt_copy, ens_set["tis_set"])
-    orderp = engine.calculate_order(shpt_copy)
-    shpt_copy.order = orderp
-    # logger.info("Modified shooting point => op/index/vpot/ekin: %f, %d, %f, %f", shpt_copy.order[0], idx, shpt_copy.vpot, shpt_copy.ekin)
+    if keep_old_ekin:
+        logger.info(f"Keeping the old kinetic energy and velocities!")
+        dek, old_vel = engine.modify_velocities(shpt_copy, ens_set["tis_set"])
+        shpt_copy.vel = old_vel
+        shpt_copy.ekin = shooting_point.ekin
+        dek = 0
+    else:
+        logger.info(f"Generating new kinetic energy and velocities!")
+        dek, _ = engine.modify_velocities(shpt_copy, ens_set["tis_set"])
+        orderp = engine.calculate_order(shpt_copy)
+        shpt_copy.order = orderp
+    logger.info(f"New kin/vel: {shpt_copy.ekin}, {shpt_copy.vel[0]}")
     return shpt_copy, idx, dek
 
 
@@ -840,45 +846,30 @@ def create_folder_name(parent_dir):
 def update_weight(path_address):
     order_file = os.path.join(path_address, "order.txt")
     ensemble = int(path_address.split("/")[-1])
-    print("="*20)
-    # print(f"Ensemble: {ensemble}")
-    # Read all lines
     with open(order_file, 'r') as f:
         lines = f.readlines()
-    
-    # Parse the first line and update the weight
     first_line = lines[0]
-    # print(first_line[:-1])
     weight_match = re.search(r'weight\s*=\s*([0-9.]+)', first_line)
-
     if weight_match:
-        # print("It's a match!")
         old_weight = float(weight_match.group(1))
-        # print(f"old_weight {old_weight}")
         new_weight = old_weight + 1.0
-        # print(f"new_weight {new_weight}")
         updated_line = re.sub(
             r'weight\s*=\s*[0-9.]+',
             f'weight = {new_weight}',
-            first_line
-        )
+            first_line)
     else:
-        # print("It's not a match!")
         logger.info(f"Old weight does not match the expected format, probably an initial path. CHECK!")
         old_weight = 1.0
-        # print(f"old_weight {old_weight}")
         new_weight = old_weight + 1.0
-        # print(f"new_weight {new_weight}")
         match = re.match(r"# Cycle: \d+, status: (\w+), move: (\(.*\))", first_line)
         status = match.group(1)
         move = match.group(2)
         updated_line = f"# Cycle: initial_path, weight = {new_weight}, ensemble = {ensemble}, status: {status}, move: {move}\n"
 
-    # print(updated_line[:-1])
     lines[0] = updated_line
     logger.info(f"lo path weight {path_address} update => Old weight: {old_weight}, new weight: {new_weight}.")
 
-    # Write lines back to the file
+    # Write the line back to the file
     with open(order_file, 'w') as f:
         f.writelines(lines)
 
@@ -916,10 +907,10 @@ def engine_swap(
             logger.info(f"No path found for ensemble {ensemble_number} in 'load1'.")
             logger.info(f"Creating initial path in ensemble {ensemble_number} using lo engine.")
             accept, new_path, status = sh_moves[move](ens_set, path0, engine1, start_cond=start_cond)
-            logger.info(f"path0 (hi) in engine1 (lo) status: {status}, old len: {path0.length}, new len: {new_path.length}")
-            logger.info(f"lo_initial_path with {lo_active_path_address} accepted.")
 
             if accept:
+                logger.info(f"path0 (hi) in engine1 (lo) status: {status}, old len: {path0.length}, new len: {new_path.length}")
+                logger.info(f"lo_initial_path with {lo_active_path_address} accepted.")
                 new_path.path_number = ensemble_number
                 data = {"path": new_path, "dir": os.path.join(os.getcwd(), "load1")}
                 pstore.output(f"lo_initial_path, weight = 1.0, ensemble = {ensemble_number}", data)
@@ -961,30 +952,40 @@ def engine_swap(
     if move == "wf":
         _, new_segment0 = wirefence_weight_and_pick(path0, wf_int[0], wf_int[2], return_seg=True, ens_set=ens_set)
         logger.info(f"Segment for wf chosen with length {new_segment0.length}")
-        shooting_point_p0, _, _ = prepare_shooting_point(new_segment0, ens_set["rgen"], engine0, ens_set)
+        shooting_point_p0, _, _ = prepare_shooting_point(new_segment0, ens_set["rgen"], engine0, ens_set, keep_old_ekin=True)
+        # logger.info(f"Vel check 1: {shooting_point_p0.vel[0]}")
     else:
-        shooting_point_p0, _, _ = prepare_shooting_point(path0, ens_set["rgen"], engine0, ens_set)
-
+        shooting_point_p0, _, _ = prepare_shooting_point(path0, ens_set["rgen"], engine0, ens_set, keep_old_ekin=True)
+        # logger.info(f"Vel check 2: {shooting_point_p0.vel[0]}")
+    shooting_point_p0_old_vel = shooting_point_p0.vel
     logger.info(f"Shooting point vpot calculation in path0 (hi) with engine0 (hi):")
     tmp_p0_e0 = path0.empty_path(maxlen=1)
     engine0.propagate(tmp_p0_e0, ens_set, shooting_point_p0)
+    shooting_point_p0.vel = shooting_point_p0_old_vel
+    # logger.info(f"Vel check 3: {shooting_point_p0.vel[0]}")
     logger.info(f"Shooting point vpot calculation in path0 (hi) with engine1 (lo):")
     tmp_p0_e1 = path0.empty_path(maxlen=1)
     engine1.propagate(tmp_p0_e1, ens_set, shooting_point_p0)
+    shooting_point_p0.vel = shooting_point_p0_old_vel
+    # logger.info(f"Vel check 4: {shooting_point_p0.vel[0]}")
 
     logger.info(f"Creating shooting point in path1 (lo):")
     if move == "wf":
         _, new_segment1 = wirefence_weight_and_pick(path1, wf_int[0], wf_int[2], return_seg=True, ens_set=ens_set)
-        shooting_point_p1, _, _ = prepare_shooting_point(new_segment1, ens_set["rgen"], engine0, ens_set)
+        shooting_point_p1, _, _ = prepare_shooting_point(new_segment1, ens_set["rgen"], engine0, ens_set, keep_old_ekin=True)
     else:
-        shooting_point_p1, _, _ = prepare_shooting_point(path1, ens_set["rgen"], engine0, ens_set)
-
+        shooting_point_p1, _, _ = prepare_shooting_point(path1, ens_set["rgen"], engine0, ens_set, keep_old_ekin=True)
+    shooting_point_p1_old_vel = shooting_point_p1.vel
     logger.info(f"Shooting point vpot calculation in path1 (lo) with engine0 (hi):")
     tmp_p1_e0 = path0.empty_path(maxlen=1)
     engine0.propagate(tmp_p1_e0, ens_set, shooting_point_p1)
+    shooting_point_p1.vel = shooting_point_p1_old_vel
+    # logger.info(f"Vel check 5: {shooting_point_p0.vel[0]}")
     logger.info(f"Shooting point vpot calculation in path1 (lo) with engine1 (lo):")
     tmp_p1_e1 = path0.empty_path(maxlen=1)
     engine1.propagate(tmp_p1_e1, ens_set, shooting_point_p1)
+    shooting_point_p1.vel = shooting_point_p1_old_vel
+    # logger.info(f"Vel check 6: {shooting_point_p0.vel[0]}")
 
     # Energy calculations for acceptance    
     P0_E0 = tmp_p0_e0.phasepoints[0].vpot
@@ -1022,12 +1023,14 @@ def engine_swap(
     # If accepted, perform the swap starting with the lo engine (assumed faster).
     if accept:
         logger.info(f"Creating a new path in engine1 (lo) from the shooting point of the path in engine0 (hi):")
+        logger.info(f"Using shooting point (hi) => op/ekin/vel: {shooting_point_p0.order[0]:.6f}, {shooting_point_p0.ekin}, {shooting_point_p0.vel[0]}")
         accept, new_path1, status = sh_moves[move](ens_set, path0, engine1, shooting_point=shooting_point_p0, start_cond=start_cond)
         logger.info(f"Move {move} for path0 (hi) in engine1 (lo) status: {status}, old path len: {path0.length}, new path len: {new_path1.length}")
         
         # If the lo engine path was accepted, continue the swap with the hi engine.
         if accept:
             logger.info(f"Creating a new path in engine0 (hi) from the shooting point of the path in engine1 (lo):")
+            logger.info(f"Using shooting point (lo) => op/ekin/vel: {shooting_point_p1.order[0]:.6f}, {shooting_point_p1.ekin}, {shooting_point_p1.vel[0]}")
             accept, new_path0, status = sh_moves[move](ens_set, path1, engine0, shooting_point=shooting_point_p1, start_cond=start_cond)
             logger.info(f"Move {move} for path1 (lo) in engine0 (hi) status: {status}, old path len: {path1.length}, new path len: {new_path0.length}")
             

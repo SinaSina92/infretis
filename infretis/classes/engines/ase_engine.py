@@ -221,6 +221,8 @@ class ASEEngine(EngineBase):
         if isinstance(atoms, list):
             atoms = atoms[0]
         kin_old = atoms.get_kinetic_energy()
+        old_vel = atoms.get_velocities()
+        logger.info(f"Old kin/vel: {kin_old}, {old_vel[0]}")
 
         MaxwellBoltzmannDistribution(atoms, temperature_K=self.temperature)
         kin_new = atoms.get_kinetic_energy()
@@ -243,7 +245,7 @@ class ASEEngine(EngineBase):
             )
         else:
             dek = kin_new - kin_old
-        return dek, kin_new
+        return dek, old_vel
 
     def _reverse_velocities(self, filename: str, outfile: str) -> None:
         atoms = read(filename)
