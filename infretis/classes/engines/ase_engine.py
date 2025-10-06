@@ -125,7 +125,7 @@ class ASEEngine(EngineBase):
         msg_file: FileIO,
         reverse: bool = False,
     ) -> Tuple[bool, str]:
-        logger.info(f"Propagating with ASE (reverse = {reverse})")
+        # logger.info(f"Propagating with ASE (reverse = {reverse})")
         interfaces = ens_set["interfaces"]
         left, _, right = interfaces
 
@@ -195,10 +195,10 @@ class ASEEngine(EngineBase):
                 )
 
                 if stop:
-                    logger.info(
-                        "ASE propagation ended at "
-                        f"step {step_nr}. Reason: {status}",
-                    )
+                    # logger.info(
+                    #     "ASE propagation ended at "
+                    #     f"step {step_nr}. Reason: {status}",
+                    # )
                     break
                 step_nr += 1
             dyn.step(forces=forces)
